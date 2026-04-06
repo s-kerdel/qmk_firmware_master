@@ -5,6 +5,11 @@
 
 #ifdef WIRELESS_ENABLE
 #    include "wireless.h"
+#    include "usb_main.h"
+
+// Provided by quantum/keyboard.c. Not exposed in keyboard.h, so re-declare it
+// here the same way wireless.c already does.
+void last_matrix_activity_trigger(void);
 #endif
 #ifdef RGB_MATRIX_ENABLE
 const snled27351_led_t PROGMEM g_snled27351_leds[SNLED27351_LED_COUNT] = {
@@ -293,6 +298,19 @@ void matrix_scan_kb(void) {
     bt_scan_mode();
     matrix_scan_user();
 }
+/* Keep RGB on while attached over USB: refresh the input-activity
+ * timestamp past half the timeout so rgb_matrix_task never trips its
+ * idle threshold. Wireless modes keep the timeout for battery life. */
+void wireless_pre_task(void) {
+#if defined(RGB_MATRIX_ENABLE) && (RGB_MATRIX_TIMEOUT > 0)
+    if ((wireless_get_current_devs() == DEVS_USB) && (USB_DRIVER.state == USB_ACTIVE)) {
+        if (last_input_activity_elapsed() >= ((uint32_t)(RGB_MATRIX_TIMEOUT) / 2)) {
+            last_matrix_activity_trigger();
+        }
+    }
+#endif
+}
+
 void wireless_post_task(void) {
 
     // auto switching devs
