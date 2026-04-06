@@ -233,7 +233,6 @@ static void md_send_pkt_task(void) {
     switch (smsg_get_state()) {
         case smsg_state_busy: {
             if (sync_timer_elapsed32(smsg_timer) > (MD_SNED_PKT_TIMEOUT)) {
-                smsg_retry = 0;
                 smsg_set_state(smsg_state_retry);
             }
         } break;
@@ -245,6 +244,7 @@ static void md_send_pkt_task(void) {
             smsg_set_state(smsg_state_free);
         } break;
         case smsg_state_replied: {
+            smsg_retry = 0;
             smsg_pop();
             smsg_set_state(smsg_state_free);
         } // break;
