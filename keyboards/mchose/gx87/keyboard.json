@@ -11,7 +11,7 @@
         "driver": "wear_leveling",
         "wear_leveling": {
             "backing_size": 4096,
-            "driver": "spi_flash"
+            "driver": "embedded_flash"
         }
     },
     "features": {
@@ -24,7 +24,8 @@
         "mousekey": true,
         "nkro": true,
         "rgb_matrix": true,
-        "rgblight": false
+        "rgblight": false,
+        "via": true
     },
     "keycodes": [
         {

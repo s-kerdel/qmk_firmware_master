@@ -149,21 +149,77 @@ void eeconfig_confinfo_init(void) {
         eeconfig_confinfo_default();
     }
 }
+/* Slider switch debounce: raw GPIO bounces several ms per movement,
+ * which spammed wireless_devs_change() and EEPROM writes. Require N
+ * consecutive identical samples before acting. */
+#ifdef BT_MODE_SW_PIN
+enum {
+    SLIDER_MODE_USB = 0,
+    SLIDER_MODE_BT,
+    SLIDER_MODE_2G4,
+    SLIDER_MODE_TRANSIENT,
+};
+#    define SLIDER_DEBOUNCE_SCANS 10
+#endif
+
 static void bt_scan_mode(void) {
 #ifdef BT_MODE_SW_PIN
-    if (readPin(RF_MODE_SW_PIN) && !readPin(BT_MODE_SW_PIN)) {
-        if ((wireless_get_current_devs() == DEVS_USB) || (wireless_get_current_devs() == DEVS_2G4)) {
-            wireless_devs_change(wireless_get_current_devs(), confinfo.BTdevs, false);
-        }
-    }
-    if (readPin(BT_MODE_SW_PIN) && !readPin(RF_MODE_SW_PIN)) {
-        if (wireless_get_current_devs() != DEVS_2G4) {
-            wireless_devs_change(wireless_get_current_devs(), DEVS_2G4, false); // 2_4G mode
+    static uint8_t slider_committed = SLIDER_MODE_TRANSIENT;
+    static uint8_t slider_candidate = SLIDER_MODE_TRANSIENT;
+    static uint8_t slider_counter   = 0;
 
-        }
+    uint8_t bt_sw = readPin(BT_MODE_SW_PIN);
+    uint8_t rf_sw = readPin(RF_MODE_SW_PIN);
+    uint8_t sample;
+
+    if (bt_sw && rf_sw) {
+        sample = SLIDER_MODE_USB;       // both high  -> USB (resting position)
+    } else if (rf_sw && !bt_sw) {
+        sample = SLIDER_MODE_BT;        // BT_SW low  -> Bluetooth
+    } else if (bt_sw && !rf_sw) {
+        sample = SLIDER_MODE_2G4;       // RF_SW low  -> 2.4 GHz
+    } else {
+        sample = SLIDER_MODE_TRANSIENT; // both low   -> in transit, ignore
     }
-    if (readPin(BT_MODE_SW_PIN) && readPin(RF_MODE_SW_PIN)) {
-        if (wireless_get_current_devs() != DEVS_USB) wireless_devs_change(wireless_get_current_devs(), DEVS_USB, false); // usb mode
+
+    // Reset counter on any sample change so only stable readings accumulate.
+    if (sample != slider_candidate) {
+        slider_candidate = sample;
+        slider_counter   = 0;
+        return;
+    }
+
+    // Skip transient (in-transit) readings and the already-committed position.
+    if (sample == SLIDER_MODE_TRANSIENT || sample == slider_committed) {
+        return;
+    }
+
+    if (slider_counter < SLIDER_DEBOUNCE_SCANS) {
+        slider_counter++;
+        return;
+    }
+
+    // Debounced transition: commit then poke the wireless FSM exactly once.
+    slider_committed = sample;
+
+    switch (sample) {
+        case SLIDER_MODE_BT: {
+            if ((wireless_get_current_devs() == DEVS_USB) || (wireless_get_current_devs() == DEVS_2G4)) {
+                wireless_devs_change(wireless_get_current_devs(), confinfo.BTdevs, false);
+            }
+        } break;
+        case SLIDER_MODE_2G4: {
+            if (wireless_get_current_devs() != DEVS_2G4) {
+                wireless_devs_change(wireless_get_current_devs(), DEVS_2G4, false);
+            }
+        } break;
+        case SLIDER_MODE_USB: {
+            if (wireless_get_current_devs() != DEVS_USB) {
+                wireless_devs_change(wireless_get_current_devs(), DEVS_USB, false);
+            }
+        } break;
+        default:
+            break;
     }
 #endif
 }

@@ -22,15 +22,25 @@
 #define UART_TX_PIN A9
 #define UART_RX_PIN A10
 
-/* SPI Config for spi flash*/
-#define SPI_DRIVER SPIDQ
-#define SPI_SCK_PIN B3
-#define SPI_MOSI_PIN B5
-#define SPI_MISO_PIN B4
-#define SPI_MOSI_PAL_MODE 5
-
-#define EXTERNAL_FLASH_SPI_SLAVE_SELECT_PIN C12
-#define WEAR_LEVELING_LOGICAL_SIZE (WEAR_LEVELING_BACKING_SIZE / 2)
+/*
+ * EEPROM is now backed by the WB32FQ95 on-chip embedded flash via QMK's
+ * wear_leveling/embedded_flash driver (selected in keyboard.json). The
+ * ChibiOS WB32 EFL LLD (EFLD1) is already compiled in by default and
+ * HAL_USE_EFL defaults to TRUE in the ChibiOS halconf.h template, so no
+ * extra halconf.h / mcuconf.h overrides are required here.
+ *
+ * The external SPI NOR that was previously used by wear_leveling is not
+ * touched by QMK anymore. Its pin/driver defines have been removed because
+ * they are dead code in this configuration; if the chip turns out to be
+ * useful for something else later it can be re-added via a dedicated
+ * driver rather than hidden behind the wear-leveling backing store.
+ *
+ * WEAR_LEVELING_LOGICAL_SIZE is intentionally NOT defined here: the EFL
+ * backing-store default is (WEAR_LEVELING_BACKING_SIZE / 2), which matches
+ * what this board used to set explicitly. Letting the default stand keeps
+ * the config honest and removes the risk of drifting out of sync with the
+ * backing-size value that now lives in keyboard.json.
+ */
 
 /* I2C Config for LED Driver */
 #define SNLED27351_I2C_ADDRESS_1 0b1110100
