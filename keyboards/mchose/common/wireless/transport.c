@@ -10,6 +10,36 @@
 #    define USB_POWER_DOWN_DELAY 3000
 #endif
 
+/* Tunables for the USB stuck-state recovery FSM in usb_remote_wakeup():
+ *   USB_STUCK_RECOVERY_DELAY         grace period (ms) before the first attempt
+ *   USB_STUCK_RECOVERY_DISCONNECT_MS D+ off-time (ms) so the host registers a removal
+ *   USB_STUCK_RECOVERY_INTERVAL      cooldown (ms) between successive attempts
+ *   USB_STUCK_RECOVERY_MAX_ATTEMPTS  retry bound; stop after N to avoid cycling
+ *                                    the bus indefinitely when no host is present
+ */
+#ifndef USB_STUCK_RECOVERY_DELAY
+#    define USB_STUCK_RECOVERY_DELAY 2000
+#endif
+
+#ifndef USB_STUCK_RECOVERY_DISCONNECT_MS
+#    define USB_STUCK_RECOVERY_DISCONNECT_MS 1000
+#endif
+
+#ifndef USB_STUCK_RECOVERY_INTERVAL
+#    define USB_STUCK_RECOVERY_INTERVAL 3000
+#endif
+
+#ifndef USB_STUCK_RECOVERY_MAX_ATTEMPTS
+#    define USB_STUCK_RECOVERY_MAX_ATTEMPTS 20
+#endif
+
+enum {
+    USB_RECOVERY_IDLE = 0,
+    USB_RECOVERY_DISCONNECTING,
+    USB_RECOVERY_COOLDOWN,
+    USB_RECOVERY_GAVE_UP,
+};
+
 extern host_driver_t chibios_driver;
 extern host_driver_t wireless_driver;
 
@@ -44,7 +74,12 @@ void usb_transport_enable(bool enable) __attribute__((weak));
 void usb_transport_enable(bool enable) {
 
     if (enable) {
-        if (host_get_driver() != &chibios_driver) {
+        host_driver_t *current = host_get_driver();
+
+        /* Restart USB only on a real wireless->USB transition. At cold boot
+         * host_get_driver() is NULL (protocol_post_init runs later), so the
+         * naive `!= &chibios_driver` check would race init_usb_driver. */
+        if (current == &wireless_driver) {
             extern bool last_suspend_state;
 
             /* This flag is not set to 1 with probability after usb restart */
@@ -53,6 +88,9 @@ void usb_transport_enable(bool enable) {
             usb_power_connect();
             restart_usb_driver(&USBD1);
 #endif
+        }
+
+        if (current != &chibios_driver) {
             host_set_driver(&chibios_driver);
         }
     } else {
@@ -119,8 +157,12 @@ void usb_remote_wakeup(void) {
         /* Woken up */
     }
 #else
-    static uint32_t suspend_timer = 0x00;
+    static uint32_t suspend_timer     = 0x00;
+    static uint32_t recovery_ts       = 0x00;
+    static uint8_t  recovery_state    = USB_RECOVERY_IDLE;
+    static uint8_t  recovery_attempts = 0;
 
+    /* Soft-suspend while the host is suspended. */
     if ((USB_DRIVER.state == USB_SUSPENDED)) {
         if (!suspend_timer) suspend_timer = sync_timer_read32();
         if (sync_timer_elapsed32(suspend_timer) >= USB_POWER_DOWN_DELAY) {
@@ -129,6 +171,65 @@ void usb_remote_wakeup(void) {
         }
     } else {
         suspend_timer = 0x00;
+    }
+
+    /* Non-blocking auto-recovery when USB never reaches USB_ACTIVE.
+     * Mirrors the manual mode-slider workaround. */
+    if (USB_DRIVER.state == USB_ACTIVE) {
+        recovery_state    = USB_RECOVERY_IDLE;
+        recovery_ts       = 0x00;
+        recovery_attempts = 0;
+        return;
+    }
+
+    switch (recovery_state) {
+        case USB_RECOVERY_IDLE:
+            if (!recovery_ts) {
+                recovery_ts = sync_timer_read32();
+            }
+            if (sync_timer_elapsed32(recovery_ts) >= USB_STUCK_RECOVERY_DELAY) {
+                if (recovery_attempts >= USB_STUCK_RECOVERY_MAX_ATTEMPTS) {
+                    recovery_state = USB_RECOVERY_GAVE_UP;
+                } else {
+                    /* Phase 1: clean shutdown (mirrors usb_transport_enable(false)). */
+                    usbStop(&USBD1);
+                    usbDisconnectBus(&USBD1);
+                    usb_power_disconnect();
+                    recovery_ts    = sync_timer_read32();
+                    recovery_state = USB_RECOVERY_DISCONNECTING;
+                }
+            }
+            break;
+
+        case USB_RECOVERY_DISCONNECTING:
+            if (sync_timer_elapsed32(recovery_ts) >= USB_STUCK_RECOVERY_DISCONNECT_MS) {
+                /* Phase 2: reconnect (mirrors usb_transport_enable(true)). */
+                extern bool last_suspend_state;
+                last_suspend_state = true;
+                usb_power_connect();
+                restart_usb_driver(&USBD1);
+                host_set_driver(&chibios_driver);
+
+                recovery_attempts++;
+                recovery_ts    = sync_timer_read32();
+                recovery_state = USB_RECOVERY_COOLDOWN;
+            }
+            break;
+
+        case USB_RECOVERY_COOLDOWN:
+            if (sync_timer_elapsed32(recovery_ts) >= USB_STUCK_RECOVERY_INTERVAL) {
+                recovery_ts    = sync_timer_read32();
+                recovery_state = USB_RECOVERY_IDLE;
+            }
+            break;
+
+        case USB_RECOVERY_GAVE_UP:
+            /* Reset only when USB_ACTIVE returns (handled at top of fn). */
+            break;
+
+        default:
+            recovery_state = USB_RECOVERY_IDLE;
+            break;
     }
 #endif
 }

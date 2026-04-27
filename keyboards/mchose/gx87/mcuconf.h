@@ -5,8 +5,10 @@
 
 #include_next <mcuconf.h>
 
+/* USB remote-wakeup K-state: vendor's 2 ms is too short for some hosts
+ * to register; restore the chibios-contrib default of 10 ms. */
 #undef WB32_USB_HOST_WAKEUP_DURATION
-#define WB32_USB_HOST_WAKEUP_DURATION 2
+#define WB32_USB_HOST_WAKEUP_DURATION 10
 
 #undef WB32_SERIAL_USE_UART1
 #define WB32_SERIAL_USE_UART1 TRUE

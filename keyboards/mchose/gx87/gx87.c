@@ -229,6 +229,30 @@ static void bt_scan_mode(void) {
 #endif
 }
 
+/* USB pull-up is external on USB_POWER_EN_PIN (active-low); it must be
+ * powered before init_usb_driver() runs, so configure it in pre_init
+ * (post_init runs after init_usb_driver). Write the value before MODER
+ * on outputs to avoid an opposite-polarity glitch. */
+void keyboard_pre_init_kb(void) {
+
+#ifdef LED_POWER_EN_PIN
+    gpio_write_pin_high(LED_POWER_EN_PIN);
+    gpio_set_pin_output(LED_POWER_EN_PIN);
+#endif
+
+#ifdef USB_POWER_EN_PIN
+    gpio_write_pin_low(USB_POWER_EN_PIN);
+    gpio_set_pin_output(USB_POWER_EN_PIN);
+#endif
+
+#ifdef BT_MODE_SW_PIN
+    gpio_set_pin_input_high(BT_MODE_SW_PIN);
+    gpio_set_pin_input_high(RF_MODE_SW_PIN);
+#endif
+
+    keyboard_pre_init_user();
+}
+
 void keyboard_post_init_kb(void) {
 
 #ifdef CONSOLE_ENABLE
@@ -237,23 +261,11 @@ void keyboard_post_init_kb(void) {
 
     eeconfig_confinfo_init();
 
-#ifdef LED_POWER_EN_PIN
-    gpio_set_pin_output(LED_POWER_EN_PIN);
-    gpio_write_pin_high(LED_POWER_EN_PIN);
-#endif
-
-#ifdef USB_POWER_EN_PIN
-    gpio_write_pin_low(USB_POWER_EN_PIN);
-    gpio_set_pin_output(USB_POWER_EN_PIN);
-#endif
-#ifdef BT_MODE_SW_PIN
-    gpio_set_pin_input_high(BT_MODE_SW_PIN);
-    gpio_set_pin_input_high(RF_MODE_SW_PIN);
-#endif
-
 #ifdef WIRELESS_ENABLE
+    /* Defer the wireless devs switch to wireless_post_task: a synchronous
+     * call here would set host_driver before protocol_post_init() overwrites
+     * it with chibios_driver, dropping ~100 ms of keystrokes on BT/2.4G boot. */
     wireless_init();
-    wireless_devs_change(!confinfo.devs, confinfo.devs, false);
     post_init_timer = timer_read32();
 #endif
 
